@@ -1,5 +1,10 @@
 #pragma once
 
+#include <fmt/core.h>
+#include <chipmunk/chipmunk.h>
+#include <chipmunk/chipmunk_structs.h>
+
+/// logging setup
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 #include <spdlog/spdlog.h>
 #include <execinfo.h>
@@ -31,3 +36,22 @@
 /// set up logging for our desired formatting.
 void
 log_init(void);
+
+/// custom formatters for chipmunk2d structs
+template <>
+struct fmt::formatter<cpVect> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(cpVect obj, FormatContext &ctx) const {
+        return fmt::format_to(ctx.out(),
+                "({:.3f}, {:.3f})", obj.x, obj.y);
+    }
+};
+
+template <>
+struct fmt::formatter<cpBody> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(const cpBody& obj, FormatContext &ctx) const {
+        return fmt::format_to(ctx.out(), "p {}, v {}",
+                cpBodyGetPosition(&obj), cpBodyGetVelocity(&obj));
+    }
+};
