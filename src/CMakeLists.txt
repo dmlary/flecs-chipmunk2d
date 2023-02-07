@@ -5,6 +5,7 @@ add_executable(tests
     main.cpp
     common.cpp
     example_test.cpp
+    simple_struct_impl.cpp
 )
 gtest_discover_tests(tests)
 
