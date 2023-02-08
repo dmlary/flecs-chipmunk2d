@@ -1,20 +1,24 @@
 include(GoogleTest)
 enable_testing()
 
-add_executable(tests
-    main.cpp
-    common.cpp
-    example_test.cpp
-    simple_struct_impl.cpp
-)
-gtest_discover_tests(tests)
+SET(IMPL_BINARIES "")
+function(add_impl name)
+    add_executable(${name}_impl
+        main.cpp
+        common.cpp
+        ${name}_impl.cpp)
+    target_link_libraries(${name}_impl PRIVATE
+        spdlog
+        gtest
+        flecs
+        chipmunk)
+    gtest_discover_tests(${name}_impl)
+    set(IMPL_BINARIES "${IMPL_BINARIES}${name}_impl;" PARENT_SCOPE)
+endfunction()
 
-target_link_libraries(tests PUBLIC
-    spdlog
-    gtest
-    flecs
-    chipmunk)
+add_impl(simple_struct)
+add_impl(unique_ptr)
 
 add_custom_target(check
     COMMAND ${CMAKE_CTEST_COMMAND}
-    DEPENDS tests)
+    DEPENDS ${IMPL_BINARIES})

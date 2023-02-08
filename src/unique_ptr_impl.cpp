@@ -1,7 +1,7 @@
-/* integration of chipmunk2d in flecs using basic structs
+/* integration of chipmunk2d in flecs using std::unique_ptr
  *
- * Note: there's no inheritance, no templating, just dumb copy-paste to show
- * the most direct/naive implementation of this possible.
+ * Building off the simple struct implementation, this implementation will
+ * use std::unique_ptr as our Components.
  *
  * Note: flecs does not support static addresses for components, and chipmunk2d
  * uses pointers internally for connecting structs together.  As a result, all
@@ -15,93 +15,10 @@
 #include <cmath>
 #include <flecs.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include "common.hpp"
 #include "flecs/addons/cpp/c_types.hpp"
-
-/// wrapper around cpSpace
-struct Space {
-    // we need a default constructor to be able to use
-    // `flecs::entity::set(std::move(...))`, otherwise we will trigger a
-    // runtime assertion during `set()`.
-    //
-    // If you're adamently against having a default constructor, you can use
-    // `flecs::entity::emplace()` for these components, but if you accidentally
-    // call `set()` instead of `emplace()`, you'll hit the runtime assertion.
-    Space() : ptr{nullptr} {}
-    Space(cpSpace *p) : ptr{p} {
-        log_debug("wrap space {}", fmt::ptr(ptr));
-    }
-    Space(const Space&) = delete;
-    Space(Space&& other) : ptr{nullptr} {
-        *this = std::move(other);
-    }
-    ~Space() {
-        if (ptr) {
-            log_debug("free space {}", fmt::ptr(ptr));
-            cpSpaceFree(ptr);
-        }
-    }
-
-    Space& operator=(const Space&) = delete;
-    Space& operator=(Space&& other) {
-        if (this != &other) {
-            assert(ptr == nullptr);
-            ptr       = other.ptr;
-            other.ptr = nullptr;
-        }
-        return *this;
-    }
-
-    /// support implicit cast to cpSpace*
-    inline operator cpSpace*() const {
-        assert(ptr != nullptr && "cpSpace pointer not initialized");
-        return ptr;
-    };
-
-    cpSpace* ptr;
-};
-
-/// wrapper around cpBody
-struct Body {
-    Body() : ptr{nullptr} {}
-    Body(cpBody *p) : ptr{p} {
-        log_debug("wrap body {}", fmt::ptr(ptr));
-    }
-    Body(const Body&) = delete;
-    Body(Body&& other) : ptr{nullptr} {
-        *this = std::move(other);
-    }
-    ~Body() {
-        if (ptr) {
-            log_debug("free body {}", fmt::ptr(ptr));
-            assert(cpBodyGetSpace(ptr) == nullptr && "not removed from space");
-            cpBodyFree(ptr);
-        }
-    }
-
-    Body& operator=(const Body&) = delete;
-    Body& operator=(Body&& other) {
-        if (this != &other) {
-            if (ptr) {
-                log_debug("free body {}", fmt::ptr(ptr));
-                assert(cpBodyGetSpace(ptr) == nullptr && "not removed from space");
-                cpBodyFree(ptr);
-            }
-            ptr       = other.ptr;
-            other.ptr = nullptr;
-        }
-        return *this;
-    }
-
-    /// support implicit cast to cpBody*
-    inline operator cpBody*() const {
-        assert(ptr != nullptr && "cpBody pointer not initialized");
-        return ptr;
-    };
-
-    cpBody* ptr;
-};
 
 /// wrapper around cpShape (cpSegmentShape, cpPolyShape, ...)
 struct Shape {
@@ -155,6 +72,26 @@ enum CollisionType {
     CT_Sensor,
 };
 
+struct SpaceDeleter {
+    void operator()(cpSpace *space) {
+        if (space) {
+            log_debug("free space {}", fmt::ptr(space));
+            cpSpaceFree(space);
+        }
+    }
+};
+using Space = std::unique_ptr<cpSpace, SpaceDeleter>;
+
+struct BodyDeleter {
+    void operator()(cpBody *body) {
+        if (body) {
+            log_debug("free body {}", fmt::ptr(body));
+            cpBodyFree(body);
+        }
+    }
+};
+using Body = std::unique_ptr<cpBody, BodyDeleter>;
+
 /// chipmunk2d module to load into flecs
 struct chipmunk2d {
     chipmunk2d(flecs::world &ecs) {
@@ -166,14 +103,16 @@ struct chipmunk2d {
         cpSpaceSetGravity(space, {0, 0});
 
         // add the space to the world as a singleton component
-        ecs.set<Space>(space);
+        ecs.emplace<Space>(space);
+
+        auto *sp = ecs.get<Space>();
 
         // add a system to step the physics space each frame
         ecs.system<>("step_space")
             .kind(flecs::PreUpdate)
             .iter([](flecs::iter &it) {
                 auto *space = it.world().get_mut<Space>();
-                cpSpaceStep(*space, it.delta_time());
+                cpSpaceStep(space->get(), it.delta_time());
             });
 
         // When a Body component is added to an entity do the following:
@@ -186,8 +125,8 @@ struct chipmunk2d {
             .event(flecs::OnSet)
             .each([](flecs::entity entity, Body& body, Space& space) {
                     log_debug("Body OnSet {}", entity);
-                    cpBodySetUserData(body, (void *)entity.id());
-                    cpSpaceAddBody(space, body);
+                    cpBodySetUserData(body.get(), (void *)entity.id());
+                    cpSpaceAddBody(space.get(), body.get());
                 });
 
         // When a Body component is removed from an entity, remove the
@@ -197,7 +136,7 @@ struct chipmunk2d {
             .event(flecs::OnRemove)
             .each([](flecs::entity entity, Body& body, Space& space) {
                     log_debug("Body OnRemove {}", entity);
-                    cpSpaceRemoveBody(space, body);
+                    cpSpaceRemoveBody(space.get(), body.get());
                 });
 
         // When a Shape component is added to an entity do the following:
@@ -207,7 +146,7 @@ struct chipmunk2d {
             .event(flecs::OnSet)
             .each([](flecs::entity entity, Shape& shape, Space& space) {
                     log_debug("Shape OnSet {}", entity);
-                    cpSpaceAddShape(space, shape);
+                    cpSpaceAddShape(space.get(), shape);
                 });
 
         // When a Shape component is removed from an entity, remove the cpShape
@@ -217,7 +156,7 @@ struct chipmunk2d {
             .event(flecs::OnRemove)
             .each([](flecs::entity entity, Shape& shape, Space& space) {
                     log_debug("Shape OnRemove {}", entity);
-                    cpSpaceRemoveShape(space, shape);
+                    cpSpaceRemoveShape(space.get(), shape);
                 });
     }
 };
@@ -230,19 +169,21 @@ struct chipmunk2d {
 // - multiple shapes on a single body
 
 /// shoot a projectile at an object, destroying both when they collide
-TEST(simple_struct, projectile_collision) {
+TEST(unique_ptr, projectile_collision) {
     // create the world and load the chipmunk2d plugin
     flecs::world ecs;
     ecs.import<chipmunk2d>();
 
     // get the space singleton, it was created by the plugin.  We need it for
     // creating physics bodies and shapes.
-    Space &space = *ecs.get_mut<Space>();
+    Space *space = ecs.get_mut<Space>();
+    ASSERT_NE(space->get(), nullptr)
+        << "Space singleton pointer is null";
 
     // add a collision handler to the space to add a collision component to any
     // entity struct by a projectile
     cpCollisionHandler* handler =
-        cpSpaceAddWildcardHandler(space, CT_Projectile);
+        cpSpaceAddWildcardHandler(space->get(), CT_Projectile);
     handler->userData  = &ecs;
     handler->beginFunc = [](cpArbiter* arb, cpSpace*,
                              cpDataPointer data) -> cpBool {
@@ -279,7 +220,7 @@ TEST(simple_struct, projectile_collision) {
     cpBody *body = cpBodyNew(1, INFINITY);
     cpBodySetPosition(body, {0, 0});
     cpBodySetVelocity(body, {10, 0});
-    arrow.set<Body>(body);
+    arrow.emplace<Body>(body);
 
     // add a shape to the physics body
     cpShape *shape = cpCircleShapeNew(body, 1, {0,0});
@@ -292,7 +233,7 @@ TEST(simple_struct, projectile_collision) {
     // assign a physics body for the apple
     body = cpBodyNew(1, INFINITY);
     cpBodySetPosition(body, {10, 0});
-    apple.set<Body>(body);
+    apple.emplace<Body>(body);
 
     // assign a 5x5 shape to the apple physics body
     shape = cpBoxShapeNew(body, 5, 5, 3);
@@ -308,7 +249,7 @@ TEST(simple_struct, projectile_collision) {
         }
         auto *p = arrow.get<Body>();
         auto *a = apple.get<Body>();
-        log_debug("arrow {}, apple {}", *p->ptr, *a->ptr);
+        log_debug("arrow {}, apple {}", *p->get(), *a->get());
     }
 
     // verify that both the apple and the arrow were destroyed
@@ -318,7 +259,7 @@ TEST(simple_struct, projectile_collision) {
 
 /// shoot a projectile at an object, only destroying the object, and allowing
 /// the projectile to continue travelling
-TEST(simple_struct, indestructable_projectile) {
+TEST(unique_ptr, indestructable_projectile) {
     // create the world and load the chipmunk2d plugin
     flecs::world ecs;
     ecs.import<chipmunk2d>();
@@ -330,7 +271,7 @@ TEST(simple_struct, indestructable_projectile) {
     // add a collision handler to the space to add a collision component to any
     // entity struct by a projectile
     cpCollisionHandler* handler =
-        cpSpaceAddWildcardHandler(space, CT_Projectile);
+        cpSpaceAddWildcardHandler(space.get(), CT_Projectile);
     handler->userData  = &ecs;
     handler->beginFunc = [](cpArbiter* arb, cpSpace*,
                              cpDataPointer data) -> cpBool {
@@ -368,7 +309,7 @@ TEST(simple_struct, indestructable_projectile) {
     cpBody *body = cpBodyNew(1, INFINITY);
     cpBodySetPosition(body, {0, 0});
     cpBodySetVelocity(body, {25, 0});
-    arrow.set<Body>(body);
+    arrow.emplace<Body>(body);
 
     // add a shape to the physics body
     cpShape *shape = cpCircleShapeNew(body, 1, {0,0});
@@ -384,7 +325,7 @@ TEST(simple_struct, indestructable_projectile) {
         cpShapeSetCollisionType(shape, CT_Object);
         flecs::entity apple = ecs.entity()
             .add<Apple>()
-            .set<Body>(body)
+            .emplace<Body>(body)
             .set<Shape>(shape);
     }
 
@@ -396,7 +337,7 @@ TEST(simple_struct, indestructable_projectile) {
             break;
         }
         auto *p = arrow.get<Body>();
-        log_debug("arrow {}", *p->ptr);
+        log_debug("arrow {}", *p->get());
     }
 
     // verify all the apples have been destroyed
@@ -407,7 +348,7 @@ TEST(simple_struct, indestructable_projectile) {
     // get the arrow body and verify it wasn't slowed down
     const Body *b = arrow.get<Body>();
     ASSERT_NE(b, nullptr) << "arrow missing Body component";
-    cpVect v = cpBodyGetVelocity(*b);
+    cpVect v = cpBodyGetVelocity(b->get());
     EXPECT_EQ(v, cpv(25, 0))
         << fmt::format("arrow did not maintain velocity: {}", v);
 }
