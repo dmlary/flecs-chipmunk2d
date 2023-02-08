@@ -18,48 +18,6 @@
 #include <memory>
 
 #include "common.hpp"
-#include "flecs/addons/cpp/c_types.hpp"
-
-/// wrapper around cpShape (cpSegmentShape, cpPolyShape, ...)
-struct Shape {
-    Shape() : ptr{nullptr} {}
-    Shape(cpShape *p) : ptr{p} {
-        log_debug("wrap shape {}", fmt::ptr(ptr));
-    }
-    Shape(const Shape&) = delete;
-    Shape(Shape&& other) : ptr{nullptr} {
-        *this = std::move(other);
-    }
-    ~Shape() {
-        if (ptr) {
-            log_debug("free shape {}", fmt::ptr(ptr));
-            assert(cpShapeGetSpace(ptr) == nullptr && "not removed from space");
-            cpShapeFree(ptr);
-        }
-    }
-
-    Shape& operator=(const Shape&) = delete;
-    Shape& operator=(Shape&& other) {
-        if (this != &other) {
-            if (ptr) {
-                log_debug("free shape {}", fmt::ptr(ptr));
-                assert(cpShapeGetSpace(ptr) == nullptr && "not removed from space");
-                cpShapeFree(ptr);
-            }
-            ptr       = other.ptr;
-            other.ptr = nullptr;
-        }
-        return *this;
-    }
-
-    /// support implicit cast to cpShape*
-    inline operator cpShape*() const {
-        assert(ptr != nullptr && "cpShape pointer not initialized");
-        return ptr;
-    };
-
-    cpShape* ptr;
-};
 
 /// component to denote a collision has occurred
 struct Collision {};
@@ -92,6 +50,16 @@ struct BodyDeleter {
 };
 using Body = std::unique_ptr<cpBody, BodyDeleter>;
 
+struct ShapeDeleter {
+    void operator()(cpShape *shape) {
+        if (shape) {
+            log_debug("free shape {}", fmt::ptr(shape));
+            cpShapeFree(shape);
+        }
+    }
+};
+using Shape = std::unique_ptr<cpShape, ShapeDeleter>;
+
 /// chipmunk2d module to load into flecs
 struct chipmunk2d {
     chipmunk2d(flecs::world &ecs) {
@@ -104,8 +72,6 @@ struct chipmunk2d {
 
         // add the space to the world as a singleton component
         ecs.emplace<Space>(space);
-
-        auto *sp = ecs.get<Space>();
 
         // add a system to step the physics space each frame
         ecs.system<>("step_space")
@@ -146,7 +112,7 @@ struct chipmunk2d {
             .event(flecs::OnSet)
             .each([](flecs::entity entity, Shape& shape, Space& space) {
                     log_debug("Shape OnSet {}", entity);
-                    cpSpaceAddShape(space.get(), shape);
+                    cpSpaceAddShape(space.get(), shape.get());
                 });
 
         // When a Shape component is removed from an entity, remove the cpShape
@@ -156,7 +122,7 @@ struct chipmunk2d {
             .event(flecs::OnRemove)
             .each([](flecs::entity entity, Shape& shape, Space& space) {
                     log_debug("Shape OnRemove {}", entity);
-                    cpSpaceRemoveShape(space.get(), shape);
+                    cpSpaceRemoveShape(space.get(), shape.get());
                 });
     }
 };
@@ -225,7 +191,7 @@ TEST(unique_ptr, projectile_collision) {
     // add a shape to the physics body
     cpShape *shape = cpCircleShapeNew(body, 1, {0,0});
     cpShapeSetCollisionType(shape, CT_Projectile);
-    arrow.set<Shape>(shape);
+    arrow.emplace<Shape>(shape);
 
     // create an apple entity
     flecs::entity apple = ecs.entity("apple");
@@ -238,7 +204,7 @@ TEST(unique_ptr, projectile_collision) {
     // assign a 5x5 shape to the apple physics body
     shape = cpBoxShapeNew(body, 5, 5, 3);
     cpShapeSetCollisionType(shape, CT_Object);
-    apple.set<Shape>(shape);
+    apple.emplace<Shape>(shape);
 
     // advance the world a second in 1/60 sec frames
     log_debug("stepping space");
@@ -314,7 +280,7 @@ TEST(unique_ptr, indestructable_projectile) {
     // add a shape to the physics body
     cpShape *shape = cpCircleShapeNew(body, 1, {0,0});
     cpShapeSetCollisionType(shape, CT_Projectile);
-    arrow.set<Shape>(shape);
+    arrow.emplace<Shape>(shape);
 
     // create a row of apples to destroy
     struct Apple {};
@@ -323,10 +289,10 @@ TEST(unique_ptr, indestructable_projectile) {
         cpBodySetPosition(body, {5.0 + (i * 5), 0});
         cpShape *shape = cpBoxShapeNew(body, 1, 1, 0);
         cpShapeSetCollisionType(shape, CT_Object);
-        flecs::entity apple = ecs.entity()
+        ecs.entity()
             .add<Apple>()
             .emplace<Body>(body)
-            .set<Shape>(shape);
+            .emplace<Shape>(shape);
     }
 
     // advance the world a second in 1/60 sec frames

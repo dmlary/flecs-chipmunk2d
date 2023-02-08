@@ -7,6 +7,7 @@ function(add_impl name)
         main.cpp
         common.cpp
         ${name}_impl.cpp)
+    target_compile_options(${name}_impl PRIVATE -Wall -Wextra -Werror)
     target_link_libraries(${name}_impl PRIVATE
         spdlog
         gtest

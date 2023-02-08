@@ -382,7 +382,7 @@ TEST(simple_struct, indestructable_projectile) {
         cpBodySetPosition(body, {5.0 + (i * 5), 0});
         cpShape *shape = cpBoxShapeNew(body, 1, 1, 0);
         cpShapeSetCollisionType(shape, CT_Object);
-        flecs::entity apple = ecs.entity()
+        ecs.entity()
             .add<Apple>()
             .set<Body>(body)
             .set<Shape>(shape);
