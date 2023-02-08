@@ -1,10 +1,10 @@
 ## flecs/Chipmunk2D integration examples
 
 This repo contains a number of different ways to use the Chipmunk2D physics
-library with the flecs ECS library using C++.
+library with the flecs ECS library in C++.
 
-flecs: https://github.com/SanderMertens/flecs
-Chipmunk2D: https://github.com/slembcke/Chipmunk2D
+- flecs: https://github.com/SanderMertens/flecs
+- Chipmunk2D: https://github.com/slembcke/Chipmunk2D
 
 Key details:
 * Chipmunk2D uses pointers internally to connect various structures together
