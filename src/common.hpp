@@ -3,6 +3,7 @@
 #include <fmt/core.h>
 #include <chipmunk/chipmunk.h>
 #include <chipmunk/chipmunk_structs.h>
+#include <flecs.h>
 
 /// logging setup
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
@@ -53,5 +54,13 @@ struct fmt::formatter<cpBody> : fmt::formatter<string_view> {
     auto format(const cpBody& obj, FormatContext &ctx) const {
         return fmt::format_to(ctx.out(), "p {}, v {}",
                 cpBodyGetPosition(&obj), cpBodyGetVelocity(&obj));
+    }
+};
+
+template <>
+struct fmt::formatter<flecs::entity> : fmt::formatter<string_view> {
+    template <typename FormatContext>
+    auto format(const flecs::entity& obj, FormatContext &ctx) const {
+        return fmt::format_to(ctx.out(), "{}", obj.str());
     }
 };
